@@ -20,6 +20,6 @@
   "styles": [
     "styles/devious-dots.css"
   ],
-  "manifest": "https://github.com/edgedoggo/devious-dots/releases/download/latest/module.json",
-  "download": "https://github.com/edgedoggo/devious-dots/releases/download/latest/devious-dots.zip"
+  "manifest": "https://raw.githubusercontent.com/edgedoggo/devious-dots/main/module.json",
+  "download": "https://raw.githubusercontent.com/edgedoggo/devious-dots/main/devious-dots.zip"
 }
