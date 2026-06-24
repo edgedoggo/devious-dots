@@ -47,6 +47,10 @@ Hooks.on("getSceneControlButtons", (controls) => {
   });
 });
 
+Hooks.on("preCreateChatMessage", (message, data) => {
+  applyQueuedChatMessage(message, data);
+});
+
 function patchRolls() {
   if (state.patched) return;
 
@@ -83,10 +87,11 @@ function patchRolls() {
   state.patched = true;
 }
 
-function applyQueuedRoll(roll, messageData = {}) {
-  if (!roll || !state.pending.size) return false;
+function applyQueuedRoll(roll, messageData = {}, userId = game.user?.id) {
+  const assignments = getAssignmentsForUser(userId);
+  if (!roll || !assignments?.size) return false;
 
-  const target = findQueuedTarget(roll, messageData);
+  const target = findQueuedTarget(roll, messageData, assignments);
   if (!target) return false;
 
   const { assignment, mode, term, result } = target;
@@ -97,12 +102,12 @@ function applyQueuedRoll(roll, messageData = {}) {
   result.active = result.active !== false;
 
   adjustRollTotal(roll, forced - original);
-  consumeAssignment(mode, assignment);
+  consumeAssignment(mode, assignment, userId);
 
   notifyGMs({
     type: "spent",
-    userId: game.user.id,
-    userName: game.user.name,
+    userId,
+    userName: game.users.get(userId)?.name ?? game.user.name,
     mode,
     faces: term.faces,
     result: forced,
@@ -112,13 +117,48 @@ function applyQueuedRoll(roll, messageData = {}) {
   return true;
 }
 
-function findQueuedTarget(roll, messageData) {
+function applyQueuedChatMessage(message, data = {}) {
+  const userId = getMessageUserId(message, data);
+  const assignments = getAssignmentsForUser(userId);
+  if (!assignments?.size) return false;
+
+  const rolls = getMessageRolls(message, data);
+  if (!rolls.length) return false;
+
+  for (const roll of rolls) {
+    const applied = applyQueuedRoll(roll, { messageData: data, messageSource: message }, userId);
+    if (!applied) continue;
+
+    updateMessageRolls(message, data, rolls);
+    return true;
+  }
+
+  return false;
+}
+
+function getMessageUserId(message, data = {}) {
+  if (typeof message?.user === "string") return message.user;
+  if (message?.user?.id) return message.user.id;
+  if (typeof data?.user === "string") return data.user;
+  if (data?.user?.id) return data.user.id;
+  if (typeof message?.userId === "string") return message.userId;
+  if (typeof data?.userId === "string") return data.userId;
+  return game.user?.id;
+}
+
+function getAssignmentsForUser(userId) {
+  if (!userId) return null;
+  if (userId === game.user?.id) return state.pending;
+  return state.roster.get(userId) ?? null;
+}
+
+function findQueuedTarget(roll, messageData, assignments = state.pending) {
   const terms = getRollTerms(roll);
   if (!terms.length) return null;
 
   const classification = classifyRoll(roll, messageData);
   for (const mode of MODE_ORDER) {
-    const assignment = state.pending.get(mode);
+    const assignment = assignments.get(mode);
     if (!assignment) continue;
     if (mode !== "any" && mode !== classification) continue;
 
@@ -127,6 +167,69 @@ function findQueuedTarget(roll, messageData) {
   }
 
   return null;
+}
+
+function getMessageRolls(message, data = {}) {
+  if (Array.isArray(message?.rolls) && message.rolls.length) return message.rolls;
+  if (Array.isArray(data?.rolls)) return data.rolls.map((roll) => hydrateRoll(roll)).filter(Boolean);
+  if (data?.roll) {
+    const roll = hydrateRoll(data.roll);
+    return roll ? [roll] : [];
+  }
+
+  return [];
+}
+
+function hydrateRoll(roll) {
+  if (!roll) return null;
+  if (roll.terms || roll.total != null) return roll;
+
+  const RollClass = globalThis.foundry?.dice?.Roll ?? globalThis.Roll;
+  if (!RollClass) return null;
+
+  try {
+    if (typeof roll === "string") return RollClass.fromJSON(roll);
+    if (typeof RollClass.fromData === "function") return RollClass.fromData(roll);
+    if (typeof RollClass.fromJSON === "function") return RollClass.fromJSON(JSON.stringify(roll));
+  } catch (error) {
+    console.warn(`${MODULE_ID} | Could not read chat message roll.`, error);
+  }
+
+  return null;
+}
+
+function updateMessageRolls(message, data, rolls) {
+  const serialized = rolls.map((roll) => serializeRoll(roll));
+  const content = rewriteMessageContent(message?.content ?? data?.content, rolls);
+  const source = { rolls: serialized };
+
+  if (content) source.content = content;
+
+  if (typeof message?.updateSource === "function") {
+    message.updateSource(source);
+  }
+
+  if (data && typeof data === "object") {
+    data.rolls = serialized;
+    if (content) data.content = content;
+  }
+}
+
+function serializeRoll(roll) {
+  if (typeof roll?.toJSON === "function") return roll.toJSON();
+  if (typeof roll?.toObject === "function") return roll.toObject();
+  return roll;
+}
+
+function rewriteMessageContent(content, rolls) {
+  if (typeof content !== "string" || !content) return null;
+
+  let index = 0;
+  return content.replace(/(<[^>]*class=["'][^"']*\bdice-total\b[^"']*["'][^>]*>)([\s\S]*?)(<\/[^>]+>)/gi, (match, open, _value, close) => {
+    const roll = rolls[index++];
+    if (!roll || !Number.isFinite(Number(roll.total))) return match;
+    return `${open}${Number(roll.total)}${close}`;
+  });
 }
 
 function getRollTerms(roll) {
@@ -209,13 +312,13 @@ function collectText(value, depth = 0, seen = new Set()) {
     .join(" ");
 }
 
-function consumeAssignment(mode, assignment) {
-  state.pending.delete(mode);
+function consumeAssignment(mode, assignment, userId = game.user?.id) {
+  if (userId === game.user?.id) state.pending.delete(mode);
 
-  const userAssignments = state.roster.get(game.user.id);
+  const userAssignments = state.roster.get(userId);
   if (userAssignments) {
     userAssignments.delete(mode);
-    if (!userAssignments.size) state.roster.delete(game.user.id);
+    if (!userAssignments.size) state.roster.delete(userId);
   }
 
   assignment.spentAt = Date.now();
