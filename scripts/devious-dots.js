@@ -26,8 +26,8 @@ Hooks.once("ready", () => {
 
   game.deviousDots = {
     open: () => openControlPanel(),
-    arm: ({ userId, faces = 20, result = 20, mode = "any" } = {}) => armUser(userId, faces, result, mode),
-    clear: (userId, mode = "any") => clearUser(userId, mode)
+    arm: ({ actorId, faces = 20, result = 20, mode = "any" } = {}) => armActor(actorId, faces, result, mode),
+    clear: (actorId, mode = "any") => clearActor(actorId, mode)
   };
 });
 
@@ -87,8 +87,9 @@ function patchRolls() {
   state.patched = true;
 }
 
-function applyQueuedRoll(roll, messageData = {}, userId = game.user?.id) {
-  const assignments = getAssignmentsForUser(userId);
+function applyQueuedRoll(roll, messageData = {}, actorId = null) {
+  const resolvedActorId = actorId ?? getRollActorId(roll, messageData);
+  const assignments = getAssignmentsForActor(resolvedActorId);
   if (!roll || !assignments?.size) return false;
 
   const target = findQueuedTarget(roll, messageData, assignments);
@@ -102,12 +103,12 @@ function applyQueuedRoll(roll, messageData = {}, userId = game.user?.id) {
   result.active = result.active !== false;
 
   adjustRollTotal(roll, forced - original);
-  consumeAssignment(mode, assignment, userId);
+  consumeAssignment(mode, assignment, resolvedActorId);
 
   notifyGMs({
     type: "spent",
-    userId,
-    userName: game.users.get(userId)?.name ?? game.user.name,
+    actorId: resolvedActorId,
+    actorName: game.actors.get(resolvedActorId)?.name ?? assignment.actorName,
     mode,
     faces: term.faces,
     result: forced,
@@ -118,15 +119,15 @@ function applyQueuedRoll(roll, messageData = {}, userId = game.user?.id) {
 }
 
 function applyQueuedChatMessage(message, data = {}) {
-  const userId = getMessageUserId(message, data);
-  const assignments = getAssignmentsForUser(userId);
+  const actorId = getMessageActorId(message, data);
+  const assignments = getAssignmentsForActor(actorId);
   if (!assignments?.size) return false;
 
   const rolls = getMessageRolls(message, data);
   if (!rolls.length) return false;
 
   for (const roll of rolls) {
-    const applied = applyQueuedRoll(roll, { messageData: data, messageSource: message }, userId);
+    const applied = applyQueuedRoll(roll, { messageData: data, messageSource: message }, actorId);
     if (!applied) continue;
 
     updateMessageRolls(message, data, rolls);
@@ -136,20 +137,105 @@ function applyQueuedChatMessage(message, data = {}) {
   return false;
 }
 
-function getMessageUserId(message, data = {}) {
-  if (typeof message?.user === "string") return message.user;
-  if (message?.user?.id) return message.user.id;
-  if (typeof data?.user === "string") return data.user;
-  if (data?.user?.id) return data.user.id;
-  if (typeof message?.userId === "string") return message.userId;
-  if (typeof data?.userId === "string") return data.userId;
-  return game.user?.id;
+function getMessageActorId(message, data = {}) {
+  return getActorIdFromSpeaker(message?.speaker)
+    ?? getActorIdFromSpeaker(data?.speaker)
+    ?? getActorIdFromFlags(message?.flags)
+    ?? getActorIdFromFlags(data?.flags)
+    ?? getActorIdFromObject(message)
+    ?? getActorIdFromObject(data)
+    ?? null;
 }
 
-function getAssignmentsForUser(userId) {
-  if (!userId) return null;
-  if (userId === game.user?.id) return state.pending;
-  return state.roster.get(userId) ?? null;
+function getRollActorId(roll, messageData = {}) {
+  return getActorIdFromObject(roll)
+    ?? getActorIdFromObject(roll?.options)
+    ?? getMessageActorId(messageData?.messageSource, messageData?.messageData)
+    ?? getActorIdFromObject(messageData)
+    ?? null;
+}
+
+function getActorIdFromSpeaker(speaker) {
+  if (!speaker) return null;
+  if (typeof speaker.actor === "string") return speaker.actor;
+  if (speaker.actor?.id) return speaker.actor.id;
+  if (typeof speaker.actorId === "string") return speaker.actorId;
+  return null;
+}
+
+function getActorIdFromFlags(flags) {
+  return getActorIdFromObject(flags?.dnd5e)
+    ?? getActorIdFromObject(flags?.world)
+    ?? getActorIdFromObject(flags);
+}
+
+function getActorIdFromObject(value, depth = 0, seen = new Set()) {
+  if (!value || typeof value !== "object" || depth > 4 || seen.has(value)) return null;
+  seen.add(value);
+
+  if (value.actor?.id) return value.actor.id;
+  if (typeof value.actor === "string" && game.actors.has(value.actor)) return value.actor;
+
+  for (const key of ["actorId", "actorID", "actorUuid", "actorUUID", "uuid"]) {
+    const id = extractActorId(value[key]);
+    if (id) return id;
+  }
+
+  for (const entry of Object.values(value)) {
+    const id = getActorIdFromObject(entry, depth + 1, seen);
+    if (id) return id;
+  }
+
+  return null;
+}
+
+function extractActorId(value) {
+  if (typeof value !== "string") return null;
+  if (game.actors.has(value)) return value;
+
+  const match = value.match(/Actor\.([^./]+)/);
+  if (match && game.actors.has(match[1])) return match[1];
+
+  return null;
+}
+
+function getActorOwnerIds(actor) {
+  return game.users
+    .filter((user) => !user.isGM && canUserRollActor(user, actor))
+    .map((user) => user.id);
+}
+
+function canCurrentUserRollActor(actorId, ownerIds = []) {
+  if (game.user?.isGM) return true;
+  if (ownerIds.includes(game.user?.id)) return true;
+
+  const actor = game.actors.get(actorId);
+  return actor ? canUserRollActor(game.user, actor) : false;
+}
+
+function canUserRollActor(user, actor) {
+  if (!user || !actor) return false;
+
+  if (typeof actor.testUserPermission === "function") {
+    return actor.testUserPermission(user, "OWNER");
+  }
+
+  const level = actor.ownership?.[user.id] ?? actor.data?.permission?.[user.id] ?? 0;
+  return Number(level) >= 3;
+}
+
+function getPlayerCharacters() {
+  return game.actors
+    .filter((actor) => {
+      if (actor.type && actor.type !== "character") return false;
+      return getActorOwnerIds(actor).length > 0;
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function getAssignmentsForActor(actorId) {
+  if (!actorId) return null;
+  return state.pending.get(actorId) ?? state.roster.get(actorId) ?? null;
 }
 
 function findQueuedTarget(roll, messageData, assignments = state.pending) {
@@ -312,13 +398,17 @@ function collectText(value, depth = 0, seen = new Set()) {
     .join(" ");
 }
 
-function consumeAssignment(mode, assignment, userId = game.user?.id) {
-  if (userId === game.user?.id) state.pending.delete(mode);
+function consumeAssignment(mode, assignment, actorId) {
+  const pendingAssignments = state.pending.get(actorId);
+  if (pendingAssignments) {
+    pendingAssignments.delete(mode);
+    if (!pendingAssignments.size) state.pending.delete(actorId);
+  }
 
-  const userAssignments = state.roster.get(userId);
-  if (userAssignments) {
-    userAssignments.delete(mode);
-    if (!userAssignments.size) state.roster.delete(userId);
+  const actorAssignments = state.roster.get(actorId);
+  if (actorAssignments) {
+    actorAssignments.delete(mode);
+    if (!actorAssignments.size) state.roster.delete(actorId);
   }
 
   assignment.spentAt = Date.now();
@@ -340,10 +430,10 @@ function openControlPanel() {
   state.app.render(true);
 }
 
-async function armUser(userId, faces, result, mode = "any") {
+async function armActor(actorId, faces, result, mode = "any") {
   if (!game.user?.isGM) return;
 
-  const normalized = normalizeAssignment(userId, faces, result, mode);
+  const normalized = normalizeAssignment(actorId, faces, result, mode);
   if (!normalized) return;
 
   const payload = {
@@ -357,14 +447,14 @@ async function armUser(userId, faces, result, mode = "any") {
   game.socket.emit(SOCKET, payload);
 }
 
-async function clearUser(userId, mode = "any") {
-  if (!game.user?.isGM || !userId) return;
+async function clearActor(actorId, mode = "any") {
+  if (!game.user?.isGM || !actorId) return;
 
   const payload = {
     type: "clear",
     senderId: game.user.id,
     senderName: game.user.name,
-    userId,
+    actorId,
     mode
   };
 
@@ -372,14 +462,14 @@ async function clearUser(userId, mode = "any") {
   game.socket.emit(SOCKET, payload);
 }
 
-function normalizeAssignment(userId, faces, result, mode) {
-  const user = game.users.get(userId);
+function normalizeAssignment(actorId, faces, result, mode) {
+  const actor = game.actors.get(actorId);
   const normalizedFaces = Math.trunc(Number(faces));
   const normalizedResult = Math.trunc(Number(result));
   const normalizedMode = ROLL_MODES[mode] ? mode : "any";
 
-  if (!user) {
-    ui.notifications.warn("Choose a valid player.");
+  if (!actor) {
+    ui.notifications.warn("Choose a valid character.");
     return null;
   }
 
@@ -394,8 +484,9 @@ function normalizeAssignment(userId, faces, result, mode) {
   }
 
   return {
-    userId,
-    userName: user.name,
+    actorId,
+    actorName: actor.name,
+    ownerIds: getActorOwnerIds(actor),
     faces: normalizedFaces,
     result: normalizedResult,
     mode: normalizedMode,
@@ -408,7 +499,7 @@ function handleSocketMessage(payload) {
 
   const sender = game.users.get(payload.senderId);
 
-  if (payload.type === "spent" && sender && payload.senderId === payload.userId) {
+  if (payload.type === "spent" && sender) {
     applySpent(payload);
     return;
   }
@@ -421,42 +512,59 @@ function handleSocketMessage(payload) {
 
 function applyArm(payload) {
   const assignment = {
-    userId: payload.userId,
-    userName: payload.userName,
+    actorId: payload.actorId,
+    actorName: payload.actorName,
+    ownerIds: Array.isArray(payload.ownerIds) ? payload.ownerIds : [],
     faces: Number(payload.faces),
     result: Number(payload.result),
     mode: ROLL_MODES[payload.mode] ? payload.mode : "any",
     createdAt: payload.createdAt ?? Date.now()
   };
 
-  const userAssignments = state.roster.get(payload.userId) ?? new Map();
-  userAssignments.set(assignment.mode, assignment);
-  state.roster.set(payload.userId, userAssignments);
+  const actorAssignments = state.roster.get(payload.actorId) ?? new Map();
+  actorAssignments.set(assignment.mode, assignment);
+  state.roster.set(payload.actorId, actorAssignments);
 
-  if (payload.userId === game.user.id) state.pending.set(assignment.mode, assignment);
+  if (canCurrentUserRollActor(payload.actorId, assignment.ownerIds)) {
+    const pendingAssignments = state.pending.get(payload.actorId) ?? new Map();
+    pendingAssignments.set(assignment.mode, assignment);
+    state.pending.set(payload.actorId, pendingAssignments);
+  }
+
   state.app?.render(false);
 }
 
 function applyClear(payload) {
   const mode = ROLL_MODES[payload.mode] ? payload.mode : "any";
-  const userAssignments = state.roster.get(payload.userId);
+  const actorAssignments = state.roster.get(payload.actorId);
 
-  if (userAssignments) {
-    userAssignments.delete(mode);
-    if (!userAssignments.size) state.roster.delete(payload.userId);
+  if (actorAssignments) {
+    actorAssignments.delete(mode);
+    if (!actorAssignments.size) state.roster.delete(payload.actorId);
   }
 
-  if (payload.userId === game.user.id) state.pending.delete(mode);
+  const pendingAssignments = state.pending.get(payload.actorId);
+  if (pendingAssignments) {
+    pendingAssignments.delete(mode);
+    if (!pendingAssignments.size) state.pending.delete(payload.actorId);
+  }
+
   state.app?.render(false);
 }
 
 function applySpent(payload) {
   const mode = ROLL_MODES[payload.mode] ? payload.mode : "any";
-  const userAssignments = state.roster.get(payload.userId);
+  const actorAssignments = state.roster.get(payload.actorId);
 
-  if (userAssignments) {
-    userAssignments.delete(mode);
-    if (!userAssignments.size) state.roster.delete(payload.userId);
+  if (actorAssignments) {
+    actorAssignments.delete(mode);
+    if (!actorAssignments.size) state.roster.delete(payload.actorId);
+  }
+
+  const pendingAssignments = state.pending.get(payload.actorId);
+  if (pendingAssignments) {
+    pendingAssignments.delete(mode);
+    if (!pendingAssignments.size) state.pending.delete(payload.actorId);
   }
 
   state.app?.render(false);
@@ -487,14 +595,13 @@ class DeviousDotsPanel extends Application {
   }
 
   async _renderInner() {
-    const players = game.users.filter((user) => !user.isGM && user.active);
-    const users = players.length ? players : game.users.filter((user) => !user.isGM);
-    const options = users
-      .map((user) => `<option value="${user.id}">${escapeHTML(user.name)}</option>`)
+    const actors = getPlayerCharacters();
+    const options = actors
+      .map((actor) => `<option value="${actor.id}">${escapeHTML(actor.name)}</option>`)
       .join("");
 
-    const rows = users.map((user) => {
-      const assignments = state.roster.get(user.id) ?? new Map();
+    const rows = actors.map((actor) => {
+      const assignments = state.roster.get(actor.id) ?? new Map();
       const statuses = MODE_ORDER.map((mode) => {
         const assignment = assignments.get(mode);
         if (!assignment) return "";
@@ -502,7 +609,7 @@ class DeviousDotsPanel extends Application {
         return `
           <span class="dd-status">
             ${escapeHTML(ROLL_MODES[mode])}: d${assignment.faces} = ${assignment.result}
-            <button type="button" data-action="clear" data-user-id="${user.id}" data-mode="${mode}" title="Clear ${escapeHTML(ROLL_MODES[mode])}">
+            <button type="button" data-action="clear" data-actor-id="${actor.id}" data-mode="${mode}" title="Clear ${escapeHTML(ROLL_MODES[mode])}">
               <i class="fas fa-times"></i>
             </button>
           </span>`;
@@ -510,7 +617,7 @@ class DeviousDotsPanel extends Application {
 
       return `
         <li class="dd-row">
-          <span class="dd-player">${escapeHTML(user.name)}</span>
+          <span class="dd-player">${escapeHTML(actor.name)}</span>
           <span class="dd-queued">${statuses || "No queued result"}</span>
         </li>`;
     }).join("");
@@ -527,8 +634,8 @@ class DeviousDotsPanel extends Application {
       <form class="dd-panel">
         <div class="dd-fields">
           <label>
-            <span>Player</span>
-            <select name="userId">${options}</select>
+            <span>Character</span>
+            <select name="actorId">${options}</select>
           </label>
           <label>
             <span>Die</span>
@@ -566,11 +673,11 @@ class DeviousDotsPanel extends Application {
     html.find("[data-action='arm']").on("click", (event) => {
       const form = event.currentTarget.closest("form");
       const data = new FormData(form);
-      armUser(data.get("userId"), data.get("faces"), data.get("result"), event.currentTarget.dataset.mode);
+      armActor(data.get("actorId"), data.get("faces"), data.get("result"), event.currentTarget.dataset.mode);
     });
 
     html.find("[data-action='clear']").on("click", (event) => {
-      clearUser(event.currentTarget.dataset.userId, event.currentTarget.dataset.mode);
+      clearActor(event.currentTarget.dataset.actorId, event.currentTarget.dataset.mode);
     });
   }
 }
