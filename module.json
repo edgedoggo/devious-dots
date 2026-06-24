@@ -1,7 +1,7 @@
 {
   "id": "devious-dots",
   "title": "Devious Dots",
-  "description": "Quietly queue a one-time die result for a selected player. The result only fires when they roll a matching die size.",
+  "description": "End a players bad roll streak by praying the the RNG gods for salvation",
   "authors": [
     {
       "name": "knoself",
