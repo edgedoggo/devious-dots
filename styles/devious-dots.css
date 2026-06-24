@@ -26,8 +26,21 @@
   font-size: 12px;
 }
 
-.dd-actions button {
+.dd-mode-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dd-mode-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
   width: 100%;
+  line-height: 1.1;
+  white-space: normal;
 }
 
 .dd-roster {
@@ -40,21 +53,36 @@
 
 .dd-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 28px;
+  grid-template-columns: 130px minmax(0, 1fr);
   gap: 8px;
-  align-items: center;
-  min-height: 30px;
-  padding: 4px 0;
+  align-items: start;
+  min-height: 32px;
+  padding: 6px 0;
   border-top: 1px solid rgba(0, 0, 0, 0.15);
 }
 
-.dd-row span {
+.dd-player {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.dd-row button {
+.dd-queued {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dd-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.dd-status button {
   width: 28px;
   height: 26px;
   line-height: 1;
