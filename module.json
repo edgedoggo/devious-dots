@@ -6,9 +6,13 @@
     {
       "name": "knoself",
       "discord": "knoself"
+    },
+    {
+      "name": "OpenKyle",
+      "url": "https://github.com/OpenKyle/earthquake"
     }
   ],
-  "version": "1.06",
+  "version": "1.07",
   "compatibility": {
     "minimum": "10",
     "verified": "11.312"
