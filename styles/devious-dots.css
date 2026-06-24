@@ -1,0 +1,61 @@
+.devious-dots .window-content {
+  padding: 0;
+}
+
+.dd-panel {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.dd-fields {
+  display: grid;
+  grid-template-columns: 1fr 88px 88px;
+  gap: 8px;
+  align-items: end;
+}
+
+.dd-fields label {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.dd-fields span {
+  color: var(--color-text-dark-secondary);
+  font-size: 12px;
+}
+
+.dd-actions button {
+  width: 100%;
+}
+
+.dd-roster {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dd-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 28px;
+  gap: 8px;
+  align-items: center;
+  min-height: 30px;
+  padding: 4px 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.dd-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dd-row button {
+  width: 28px;
+  height: 26px;
+  line-height: 1;
+}

@@ -1,22 +1,25 @@
 {
-    "id": "devious-dots",
-    "title": "Devious Dots",
-	"socket": true,
-    "description": "The dots are devious...",
-    "authors": [
-        {
-            "name": "knoself",
-            "discord": "knoself"
-        }
-    ],
-    "esmodules": [
-        "scripts/client-side.js"
-    ],
-    "version": "0.1",
-    "compatibility": {
-        "minimum": 10,
-        "verified": "11.312"
-    },
-    "manifest": "https://github.com/edgedoggo/fvtt-devious-dots/releases/download/latest/module.json",
-    "download": "https://github.com/edgedoggo/fvtt-devious-dots/releases/download/latest/devious-dots.zip"
+  "id": "devious-dots",
+  "title": "Devious Dots",
+  "description": "Quietly queue a one-time die result for a selected player. The result only fires when they roll a matching die size.",
+  "authors": [
+    {
+      "name": "knoself",
+      "discord": "knoself"
+    }
+  ],
+  "version": "1.0.0",
+  "compatibility": {
+    "minimum": "10",
+    "verified": "11.312"
+  },
+  "socket": true,
+  "esmodules": [
+    "scripts/devious-dots.js"
+  ],
+  "styles": [
+    "styles/devious-dots.css"
+  ],
+  "manifest": "https://github.com/edgedoggo/devious-dots/releases/download/latest/module.json",
+  "download": "https://github.com/edgedoggo/devious-dots/releases/download/latest/devious-dots.zip"
 }
